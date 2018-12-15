@@ -1,71 +1,81 @@
-import requests  
-import datetime
-token = '700842675:AAFpIba8J9JAFvR8PJmqXp-EtjKwX7kpn50'
-class BotHandler:
+import telebot
+import bs4
+from Task import Task
+import parser
+import markups as m
 
-    def __init__(self, token):
-        self.token = token
-        self.api_url = "https://api.telegram.org/bot{}/".format(token)
+#main variables
+TOKEN = '700842675:AAFpIba8J9JAFvR8PJmqXp-EtjKwX7kpn50'
+bot = telebot.TeleBot(TOKEN)
+task = Task()
 
-    def get_updates(self, offset=None, timeout=30):
-        method = 'getUpdates'
-        params = {'timeout': timeout, 'offset': offset}
-        resp = requests.get(self.api_url + method, params)
-        result_json = resp.json()['result']
-        return result_json
+#handlers
+@bot.message_handler(commands=['start', 'go'])
+def start_handler(message):
+    if not task.isRunning:
+        chat_id = message.chat.id
+        msg = bot.send_message(chat_id, 'Откуда парсить?', reply_markup=m.source_markup)
+        bot.register_next_step_handler(msg, askSource)
+        task.isRunning = True
 
-    def send_message(self, chat_id, text):
-        params = {'chat_id': chat_id, 'text': text}
-        method = 'sendMessage'
-        resp = requests.post(self.api_url + method, params)
-        return resp
+def askSource(message):
+    chat_id = message.chat.id
+    text = message.text.lower()
+    if text in task.names[0]:
+        task.mySource = 'top'
+        msg = bot.send_message(chat_id, 'За какой временной промежуток?', reply_markup=m.age_markup)
+        bot.register_next_step_handler(msg, askAge)
+    elif text in task.names[1]:
+        task.mySource = 'all'
+        msg = bot.send_message(chat_id, 'Какой минимальный порог рейтинга?', reply_markup=m.rating_markup)
+        bot.register_next_step_handler(msg, askRating)
+    else:
+        msg = bot.send_message(chat_id, 'Такого раздела нет. Введите раздел корректно.')
+        bot.register_next_step_handler(msg, askSource)
+        return
 
-    def get_last_update(self):
-        get_result = self.get_updates()
+def askAge(message):
+    chat_id = message.chat.id
+    text = message.text.lower()
+    filters = task.filters[0]
+    if text not in filters:
+        msg = bot.send_message(chat_id, 'Такого временного промежутка нет. Введите порог корректно.')
+        bot.register_next_step_handler(msg, askAge)
+        return
+    task.myFilter = task.filters_code_names[0][filters.index(text)]
+    msg = bot.send_message(chat_id, 'Сколько страниц парсить?', reply_markup=m.amount_markup)
+    bot.register_next_step_handler(msg, askAmount)
 
-        if len(get_result) > 0:
-            last_update = get_result[-1]
-        else:
-            last_update = get_result[len(get_result)]
+def askRating(message):
+    chat_id = message.chat.id
+    text = message.text.lower()
+    filters = task.filters[1]
+    if text not in filters:
+        msg = bot.send_message(chat_id, 'Такого порога нет. Введите порог корректно.')
+        bot.register_next_step_handler(msg, askRating)
+        return
+    task.myFilter = task.filters_code_names[1][filters.index(text)]
+    msg = bot.send_message(chat_id, 'Сколько страниц парсить?', reply_markup=m.amount_markup)
+    bot.register_next_step_handler(msg, askAmount)
 
-        return last_update
-        
-        greet_bot = BotHandler(token)  
-greetings = ('здравствуй', 'привет', 'ку', 'здорово')  
-now = datetime.datetime.now()
+def askAmount(message):
+    chat_id = message.chat.id
+    text = message.text.lower()
+    if not text.isdigit():
+        msg = bot.send_message(chat_id, 'Количество страниц должно быть числом. Введите корректно.')
+        bot.register_next_step_handler(msg, askAmount)
+        return
+    if int(text) < 1 or int(text) > 5:
+        msg = bot.send_message(chat_id, 'Количество страниц должно быть >0 и <6. Введите корректно.')
+        bot.register_next_step_handler(msg, askAmount)
+        return
+    task.isRunning = False
+    print(task.mySource + " | " + task.myFilter + ' | ' + text) #
+    output = ''
+    if task.mySource == 'top':
+        output = parser.getTitlesFromTop(int(text), task.myFilter)
+    else:
+        output = parser.getTitlesFromAll(int(text), task.myFilter)
+    msg = bot.send_message(chat_id, output, reply_markup=m.start_markup)
 
-
-def main():  
-    new_offset = None
-    today = now.day
-    hour = now.hour
-
-    while True:
-        greet_bot.get_updates(new_offset)
-
-        last_update = greet_bot.get_last_update()
-
-        last_update_id = last_update['update_id']
-        last_chat_text = last_update['message']['text']
-        last_chat_id = last_update['message']['chat']['id']
-        last_chat_name = last_update['message']['chat']['first_name']
-
-        if last_chat_text.lower() in greetings and today == now.day and 6 <= hour < 12:
-            greet_bot.send_message(last_chat_id, 'Доброе утро, {}'.format(last_chat_name))
-            today += 1
-
-        elif last_chat_text.lower() in greetings and today == now.day and 12 <= hour < 17:
-            greet_bot.send_message(last_chat_id, 'Добрый день, {}'.format(last_chat_name))
-            today += 1
-
-        elif last_chat_text.lower() in greetings and today == now.day and 17 <= hour < 23:
-            greet_bot.send_message(last_chat_id, 'Добрый вечер, {}'.format(last_chat_name))
-            today += 1
-
-        new_offset = last_update_id + 1
-
-if __name__ == '__main__':  
-    try:
-        main()
-    except KeyboardInterrupt:
-        exit()
+bot.polling(none_stop=True)
